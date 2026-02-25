@@ -568,92 +568,91 @@ def evaluate_question_with_ai(question: str, item: dict) -> str:
     Returns:
         "Yes", "No", or "Irrelevant"
     """
-    # Format facts for the prompt
-    facts_list = []
-    for key, value in item['facts'].items():
-        if value is True:
-            facts_list.append(f"- {key.replace('_', ' ')}: Yes")
-        elif value is False:
-            facts_list.append(f"- {key.replace('_', ' ')}: No")
-        elif value is not None:
-            facts_list.append(f"- {key.replace('_', ' ')}: {value}")
     
-    facts_text = "\n".join(facts_list) if facts_list else "No specific facts available"
-    
-    prompt = f"""You are a cybersecurity expert evaluating questions in a guessing game. Use COMMON SENSE and domain knowledge.
+    prompt = f"""You are answering a yes/no question about a cybersecurity concept in a guessing game.
 
-The SECRET CONCEPT is: {item['name']}
-Category: {item['category']}
-Description: {item['description']}
-
-CONCEPT FACTS:
-{facts_text}
+THE CONCEPT: {item['name']}
+DESCRIPTION: {item['description']}
 
 PLAYER'S QUESTION: "{question}"
 
-INSTRUCTIONS - USE COMMON SENSE:
-1. Consider the REAL NATURE of the concept, not just binary facts
-2. Use your cybersecurity knowledge to answer intelligently
-3. Understand NUANCE - tools can be neutral, not purely attack or defense
+CRITICAL RULES:
+1. If the concept name contains the answer, USE THAT (e.g., "DDoS Attack" contains "Attack" → "is it an attack?" = YES)
+2. Use your cybersecurity expertise and common sense
+3. Answer based on what the concept ACTUALLY IS, not just metadata
 
-EXAMPLES OF COMMON SENSE REASONING:
-- "Is it an attack?" for "Phishing Attack" → YES (it's literally an attack)
-- "Is it an attack?" for "DirBuster" → NO (it's a tool that CAN be used for attacks, but isn't an attack itself)
-- "Is it defensive?" for "DirBuster" → NO (it's an enumeration tool, not defensive)
-- "Is it a tool?" for "DirBuster" → YES (it's clearly a tool)
-- "Is it malicious?" for "Firewall" → NO (firewalls are protective)
-- "Is it malicious?" for "Ransomware" → YES (ransomware is inherently malicious)
+EXAMPLES:
+- "Is it an attack?" for "DDoS Attack" → YES (it's literally called an attack!)
+- "Is it an attack?" for "Phishing Attack" → YES (attack is in the name!)
+- "Is it an attack?" for "SQL Injection" → YES (it's a type of attack)
+- "Is it an attack?" for "Firewall" → NO (it's a defense mechanism)
+- "Is it an attack?" for "Nmap" → NO (it's a scanning tool, not an attack)
+- "Is it malicious?" for "Ransomware" → YES (ransomware is malicious software)
+- "Is it defensive?" for "Firewall" → YES (firewalls defend networks)
 
-KEY PRINCIPLES:
-- ATTACKS are malicious actions (Phishing, DDoS, SQL Injection)
-- TOOLS are software/utilities that can be used for various purposes (Nmap, DirBuster, Metasploit)
-- DEFENSES are protective measures (Firewall, Antivirus, IDS)
-- Some tools are NEUTRAL - they enumerate, scan, or analyze but aren't attacks themselves
-- Consider the PRIMARY PURPOSE and nature of the concept
+ANSWER FORMAT:
+- Reply "Yes" if the statement is TRUE
+- Reply "No" if the statement is FALSE
+- Reply "Irrelevant" ONLY if the question makes no sense or cannot be answered yes/no
 
-ANSWER GUIDELINES:
-- "Yes" - The statement is TRUE about this concept
-- "No" - The statement is FALSE about this concept  
-- "Irrelevant" - The question doesn't make sense or can't be answered yes/no
+Think step by step:
+1. What is "{item['name']}"?
+2. Does the question apply to it?
+3. What's the answer?
 
-Think like a cybersecurity professional. Return ONLY ONE WORD: "Yes", "No", or "Irrelevant"
-
-Answer:"""
+Your answer (one word only):"""
 
     try:
         response = gemini_model.generate_content(
             prompt,
             generation_config={
-                "temperature": 0.2,
-                "max_output_tokens": 10,
+                "temperature": 0.3,  # Slightly higher for better reasoning
+                "max_output_tokens": 20,
+                "top_p": 0.95,
             }
         )
         
+        print(f"[AI DEBUG] Concept: {item['name']}")
         print(f"[AI DEBUG] Question: {question}")
-        print(f"[AI DEBUG] Raw response: {response}")
         
         if response and hasattr(response, 'text') and response.text:
-            answer = response.text.strip().strip('"').strip("'")
-            print(f"[AI DEBUG] Parsed answer: {answer}")
+            answer = response.text.strip().strip('"').strip("'").strip('.')
+            print(f"[AI DEBUG] Raw answer: '{answer}'")
+            
+            # More flexible parsing
             answer_lower = answer.lower()
             
-            if "yes" in answer_lower:
+            # Check for yes
+            if answer_lower in ['yes', 'y'] or answer_lower.startswith('yes'):
+                print(f"[AI DEBUG] Returning: Yes")
                 return "Yes"
-            elif "no" in answer_lower:
+            # Check for no
+            elif answer_lower in ['no', 'n'] or answer_lower.startswith('no'):
+                print(f"[AI DEBUG] Returning: No")
                 return "No"
-            else:
+            # Check for irrelevant
+            elif 'irrelevant' in answer_lower or 'not applicable' in answer_lower:
+                print(f"[AI DEBUG] Returning: Irrelevant")
                 return "Irrelevant"
+            else:
+                # If unclear, try to extract yes/no from the text
+                if 'yes' in answer_lower and 'no' not in answer_lower:
+                    print(f"[AI DEBUG] Found 'yes' in text, returning: Yes")
+                    return "Yes"
+                elif 'no' in answer_lower and 'yes' not in answer_lower:
+                    print(f"[AI DEBUG] Found 'no' in text, returning: No")
+                    return "No"
+                else:
+                    print(f"[AI DEBUG] Unclear response, returning: Irrelevant")
+                    return "Irrelevant"
         else:
-            print(f"[AI DEBUG] No text in response or response is None")
-            # Check if response was blocked
+            print(f"[AI ERROR] No text in response")
             if response and hasattr(response, 'prompt_feedback'):
                 print(f"[AI DEBUG] Prompt feedback: {response.prompt_feedback}")
-            # Return Irrelevant instead of crashing
             return "Irrelevant"
             
     except Exception as e:
         print(f"[AI ERROR] Exception: {str(e)}")
-        print(f"[AI ERROR] Exception type: {type(e)}")
         import traceback
         traceback.print_exc()
         return "Irrelevant"
