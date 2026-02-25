@@ -332,7 +332,7 @@ def start_game():
     """
     data = request.json
     difficulty = data.get('difficulty', 'hard')
-    use_ai = data.get('use_ai', True)  # Default to AI mode for variety
+    use_ai = data.get('use_ai', False)  # Default to static mode for stability
     sid = get_session_id(request)
     
     if use_ai:
@@ -409,9 +409,9 @@ def generate_concept_with_ai(difficulty: str, session_id: str) -> dict:
         "expert": "cutting-edge cybersecurity topics like AI security, quantum cryptography, advanced persistent threats, or emerging research areas"
     }
     
-    # Build exclusion list
-    exclusions = list(generate_concept_with_ai.used_concepts.union(set(recent)))
-    exclusion_text = f"\n\nDO NOT USE these concepts (already used): {', '.join(exclusions)}" if exclusions else ""
+    # Build exclusion list (limit to last 20 to avoid huge prompts)
+    recent_exclusions = list(set(recent[-20:]))
+    exclusion_text = f"\n\nDO NOT USE these recently used concepts: {', '.join(recent_exclusions)}" if recent_exclusions else ""
     
     prompt = f"""Generate a unique cybersecurity concept for a guessing game.
 
@@ -427,34 +427,35 @@ REQUIREMENTS:
 OUTPUT FORMAT (JSON):
 {{
     "name": "Concept Name",
-    "category": "cybersecurity|ai_concept|historical_cyber_event",
+    "category": "cybersecurity",
     "description": "Brief 1-sentence description",
     "facts": {{
-        "is_a_concept": true/false,
-        "is_physical": true/false,
+        "is_a_concept": true,
+        "is_physical": false,
         "is_a_person": false,
-        "involves_computers": true/false,
-        "is_malicious": true/false,
-        "is_defensive": true/false,
-        "requires_internet": true/false,
-        "involves_human_error": true/false,
-        "is_automated": true/false,
-        "predates_2000": true/false,
-        "is_illegal": true/false,
-        "is_widely_known": true/false,
-        "is_a_protocol": true/false,
-        "is_a_tool": true/false,
-        "involves_deception": true/false,
-        "targets_individuals": true/false,
-        "targets_organizations": true/false,
-        "is_an_attack": true/false,
-        "is_network_based": true/false
+        "involves_computers": true,
+        "is_malicious": true,
+        "is_defensive": false,
+        "requires_internet": true,
+        "involves_human_error": false,
+        "is_automated": true,
+        "predates_2000": false,
+        "is_illegal": true,
+        "is_widely_known": true,
+        "is_a_protocol": false,
+        "is_a_tool": false,
+        "involves_deception": false,
+        "targets_individuals": false,
+        "targets_organizations": true,
+        "is_an_attack": true,
+        "is_network_based": true
     }}
 }}
 
-Return ONLY valid JSON, no other text."""
+Return ONLY valid JSON, no markdown, no explanations."""
 
     try:
+        print(f"[AI CONCEPT] Generating concept for difficulty: {difficulty}")
         response = gemini_model.generate_content(
             prompt,
             generation_config={
@@ -466,6 +467,8 @@ Return ONLY valid JSON, no other text."""
         if response and hasattr(response, 'text') and response.text:
             # Extract JSON from response
             text = response.text.strip()
+            print(f"[AI CONCEPT] Raw response: {text[:200]}...")
+            
             # Remove markdown code blocks if present
             if '```json' in text:
                 text = text.split('```json')[1].split('```')[0].strip()
@@ -474,22 +477,34 @@ Return ONLY valid JSON, no other text."""
             
             concept = json.loads(text)
             
+            # Validate required fields
+            if 'name' not in concept or 'category' not in concept or 'description' not in concept:
+                raise ValueError("Missing required fields in generated concept")
+            
             # Track this concept
             generate_concept_with_ai.used_concepts.add(concept['name'])
             recent_concepts[session_id].append(concept['name'])
-            if len(recent_concepts[session_id]) > 10:
+            if len(recent_concepts[session_id]) > 20:
                 recent_concepts[session_id].pop(0)
             
-            print(f"[AI CONCEPT] Generated: {concept['name']}")
+            print(f"[AI CONCEPT] Successfully generated: {concept['name']}")
             return concept
         else:
             raise Exception("No response from AI")
             
     except Exception as e:
         print(f"[AI CONCEPT ERROR] Failed to generate concept: {str(e)}")
-        # Fallback to static pool
+        import traceback
+        traceback.print_exc()
+        
+        # Fallback to static pool with better selection
         items = ITEMS.get(difficulty, ITEMS['hard'])
-        return random.choice(items)
+        available = [item for item in items if item['name'] not in recent]
+        if not available:
+            available = items
+        selected = random.choice(available)
+        print(f"[AI CONCEPT] Using fallback: {selected['name']}")
+        return selected
 
 @app.route('/api/question', methods=['POST'])
 def ask_question():
@@ -633,8 +648,8 @@ Answer:"""
             # Check if response was blocked
             if response and hasattr(response, 'prompt_feedback'):
                 print(f"[AI DEBUG] Prompt feedback: {response.prompt_feedback}")
-            # Don't fallback - raise error so we know something is wrong
-            raise Exception("No response text from AI - check API key and model availability")
+            # Return Irrelevant instead of crashing
+            return "Irrelevant"
             
     except Exception as e:
         print(f"[AI ERROR] Exception: {str(e)}")
@@ -665,7 +680,12 @@ def make_guess():
     
     # Use AI to validate the guess
     item = session['item']
-    is_correct = validate_guess_with_ai(guess, item)
+    try:
+        is_correct = validate_guess_with_ai(guess, item)
+    except Exception as e:
+        print(f"[GUESS ERROR] AI validation failed: {str(e)}")
+        # Fallback to exact match if AI fails
+        is_correct = guess.lower() == item['name'].lower()
     
     if is_correct:
         hints_used = session['hints_used']
@@ -768,13 +788,15 @@ Answer:"""
             print(f"[GUESS ERROR] No text in response")
             if response and hasattr(response, 'prompt_feedback'):
                 print(f"[GUESS DEBUG] Prompt feedback: {response.prompt_feedback}")
-            raise Exception("No response text from AI")
+            # Fallback to exact match
+            return guess.lower() == item['name'].lower()
             
     except Exception as e:
         print(f"[GUESS ERROR] Exception: {str(e)}")
         import traceback
         traceback.print_exc()
-        raise Exception(f"AI validation failed: {str(e)}")
+        # Fallback to exact match
+        return guess.lower() == item['name'].lower()
 
 @app.route('/api/hint', methods=['POST'])
 def get_hint():
