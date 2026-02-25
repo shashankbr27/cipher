@@ -21,7 +21,9 @@ import google.generativeai as genai
 app = Flask(__name__)
 
 # Initialize Gemini API
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', 'AIzaSyBdn4OvKVSW5mTPSGr8fwE0WVh9lqlF2z0')
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
+if not GEMINI_API_KEY:
+    raise ValueError("GEMINI_API_KEY environment variable is required!")
 print(f"[INIT] Using API key: {GEMINI_API_KEY[:20]}...")
 genai.configure(api_key=GEMINI_API_KEY)
 gemini_model = genai.GenerativeModel('gemini-2.5-flash')
@@ -523,7 +525,8 @@ Answer:"""
             # Check if response was blocked
             if response and hasattr(response, 'prompt_feedback'):
                 print(f"[AI DEBUG] Prompt feedback: {response.prompt_feedback}")
-            return "Irrelevant"
+            # Don't fallback - raise error so we know something is wrong
+            raise Exception("No response text from AI - check API key and model availability")
             
     except Exception as e:
         print(f"[AI ERROR] Exception: {str(e)}")
@@ -646,17 +649,24 @@ Answer:"""
             }
         )
         
-        if response and response.text:
+        print(f"[GUESS DEBUG] Guess: {guess}, Answer: {item['name']}")
+        print(f"[GUESS DEBUG] Raw response: {response}")
+        
+        if response and hasattr(response, 'text') and response.text:
             result = response.text.strip().upper()
+            print(f"[GUESS DEBUG] Parsed result: {result}")
             return "CORRECT" in result
         else:
-            # Fallback to exact match
-            return guess.lower() == item['name'].lower()
+            print(f"[GUESS ERROR] No text in response")
+            if response and hasattr(response, 'prompt_feedback'):
+                print(f"[GUESS DEBUG] Prompt feedback: {response.prompt_feedback}")
+            raise Exception("No response text from AI")
             
     except Exception as e:
-        print(f"Error validating guess with AI: {str(e)}")
-        # Fallback to exact match
-        return guess.lower() == item['name'].lower()
+        print(f"[GUESS ERROR] Exception: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise Exception(f"AI validation failed: {str(e)}")
 
 @app.route('/api/hint', methods=['POST'])
 def get_hint():
