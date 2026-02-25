@@ -21,9 +21,11 @@ import google.generativeai as genai
 app = Flask(__name__)
 
 # Initialize Gemini API
-GEMINI_API_KEY = "AIzaSyBdn4OvKVSW5mTPSGr8fwE0WVh9lqlF2z0"
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', 'AIzaSyBdn4OvKVSW5mTPSGr8fwE0WVh9lqlF2z0')
+print(f"[INIT] Using API key: {GEMINI_API_KEY[:20]}...")
 genai.configure(api_key=GEMINI_API_KEY)
 gemini_model = genai.GenerativeModel('gemini-2.5-flash')
+print(f"[INIT] Gemini model initialized: gemini-2.5-flash")
 
 # ─────────────────────────────────────────────
 #  GAME KNOWLEDGE BASE
@@ -497,13 +499,17 @@ Answer:"""
         response = gemini_model.generate_content(
             prompt,
             generation_config={
-                "temperature": 0.2,  # Slightly higher for better reasoning
+                "temperature": 0.2,
                 "max_output_tokens": 10,
             }
         )
         
-        if response and response.text:
+        print(f"[AI DEBUG] Question: {question}")
+        print(f"[AI DEBUG] Raw response: {response}")
+        
+        if response and hasattr(response, 'text') and response.text:
             answer = response.text.strip().strip('"').strip("'")
+            print(f"[AI DEBUG] Parsed answer: {answer}")
             answer_lower = answer.lower()
             
             if "yes" in answer_lower:
@@ -513,10 +519,17 @@ Answer:"""
             else:
                 return "Irrelevant"
         else:
+            print(f"[AI DEBUG] No text in response or response is None")
+            # Check if response was blocked
+            if response and hasattr(response, 'prompt_feedback'):
+                print(f"[AI DEBUG] Prompt feedback: {response.prompt_feedback}")
             return "Irrelevant"
             
     except Exception as e:
-        print(f"Error evaluating question with AI: {str(e)}")
+        print(f"[AI ERROR] Exception: {str(e)}")
+        print(f"[AI ERROR] Exception type: {type(e)}")
+        import traceback
+        traceback.print_exc()
         return "Irrelevant"
 
 @app.route('/api/guess', methods=['POST'])
