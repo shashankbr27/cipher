@@ -328,39 +328,44 @@ def index():
 @app.route('/api/start', methods=['POST'])
 def start_game():
     """
-    Start a new game, avoiding recently used concepts for variety.
+    Start a new game with AI-generated concepts for unlimited variety.
     """
     data = request.json
     difficulty = data.get('difficulty', 'hard')
+    use_ai = data.get('use_ai', True)  # Default to AI mode for variety
     sid = get_session_id(request)
     
-    # Get available items for this difficulty
-    items = ITEMS.get(difficulty, ITEMS['hard'])
+    if use_ai:
+        # Generate a unique concept using AI
+        item = generate_concept_with_ai(difficulty, sid)
+    else:
+        # Use static pool (limited variety)
+        items = ITEMS.get(difficulty, ITEMS['hard'])
+        
+        # Get recently used concepts for this session
+        if sid not in recent_concepts:
+            recent_concepts[sid] = []
+        
+        recent = recent_concepts[sid]
+        
+        # Try to find a concept that hasn't been used recently
+        available_items = [item for item in items if item['name'] not in recent]
+        
+        # If all concepts have been used recently, reset and use all
+        if not available_items:
+            recent_concepts[sid] = []
+            available_items = items
+            print(f"Session {sid}: All concepts used, resetting recent list")
+        
+        # Select a random concept from available ones
+        item = random.choice(available_items)
+        
+        # Track this concept as recently used (keep last 5)
+        recent_concepts[sid].append(item['name'])
+        if len(recent_concepts[sid]) > 5:
+            recent_concepts[sid].pop(0)
     
-    # Get recently used concepts for this session (last 5 games)
-    if sid not in recent_concepts:
-        recent_concepts[sid] = []
-    
-    recent = recent_concepts[sid]
-    
-    # Try to find a concept that hasn't been used recently
-    available_items = [item for item in items if item['name'] not in recent]
-    
-    # If all concepts have been used recently, reset and use all
-    if not available_items:
-        recent_concepts[sid] = []
-        available_items = items
-        print(f"Session {sid}: All concepts used, resetting recent list")
-    
-    # Select a random concept from available ones
-    item = random.choice(available_items)
-    
-    # Track this concept as recently used (keep last 5)
-    recent_concepts[sid].append(item['name'])
-    if len(recent_concepts[sid]) > 5:
-        recent_concepts[sid].pop(0)
-    
-    print(f"Session {sid}: Selected '{item['name']}', Recent: {recent_concepts[sid]}")
+    print(f"Session {sid}: Selected '{item['name']}', Mode: {'AI' if use_ai else 'Static'}")
     
     sessions[sid] = {
         "item": item,
@@ -382,6 +387,109 @@ def start_game():
         "category_hint": item["category"].replace("_", " ").title(),
         "questions_remaining": 20
     })
+
+def generate_concept_with_ai(difficulty: str, session_id: str) -> dict:
+    """
+    Generate a unique cybersecurity concept using AI.
+    Ensures no repetition by tracking globally used concepts.
+    """
+    # Track globally used concepts (not just per session)
+    if not hasattr(generate_concept_with_ai, 'used_concepts'):
+        generate_concept_with_ai.used_concepts = set()
+    
+    # Get recently used concepts for this session
+    if session_id not in recent_concepts:
+        recent_concepts[session_id] = []
+    
+    recent = recent_concepts[session_id]
+    
+    difficulty_descriptions = {
+        "medium": "well-known cybersecurity concepts like common attacks, basic security tools, or widely recognized threats",
+        "hard": "advanced cybersecurity concepts like specific malware families, historical cyber events, or specialized security frameworks",
+        "expert": "cutting-edge cybersecurity topics like AI security, quantum cryptography, advanced persistent threats, or emerging research areas"
+    }
+    
+    # Build exclusion list
+    exclusions = list(generate_concept_with_ai.used_concepts.union(set(recent)))
+    exclusion_text = f"\n\nDO NOT USE these concepts (already used): {', '.join(exclusions)}" if exclusions else ""
+    
+    prompt = f"""Generate a unique cybersecurity concept for a guessing game.
+
+DIFFICULTY: {difficulty.upper()}
+DESCRIPTION: {difficulty_descriptions.get(difficulty, difficulty_descriptions['hard'])}
+
+REQUIREMENTS:
+1. Must be a real cybersecurity concept, attack, tool, defense, or technology
+2. Must be appropriate for {difficulty} difficulty level
+3. Must be interesting and educational
+4. Must have clear yes/no answerable properties{exclusion_text}
+
+OUTPUT FORMAT (JSON):
+{{
+    "name": "Concept Name",
+    "category": "cybersecurity|ai_concept|historical_cyber_event",
+    "description": "Brief 1-sentence description",
+    "facts": {{
+        "is_a_concept": true/false,
+        "is_physical": true/false,
+        "is_a_person": false,
+        "involves_computers": true/false,
+        "is_malicious": true/false,
+        "is_defensive": true/false,
+        "requires_internet": true/false,
+        "involves_human_error": true/false,
+        "is_automated": true/false,
+        "predates_2000": true/false,
+        "is_illegal": true/false,
+        "is_widely_known": true/false,
+        "is_a_protocol": true/false,
+        "is_a_tool": true/false,
+        "involves_deception": true/false,
+        "targets_individuals": true/false,
+        "targets_organizations": true/false,
+        "is_an_attack": true/false,
+        "is_network_based": true/false
+    }}
+}}
+
+Return ONLY valid JSON, no other text."""
+
+    try:
+        response = gemini_model.generate_content(
+            prompt,
+            generation_config={
+                "temperature": 1.0,  # Higher for more variety
+                "max_output_tokens": 500,
+            }
+        )
+        
+        if response and hasattr(response, 'text') and response.text:
+            # Extract JSON from response
+            text = response.text.strip()
+            # Remove markdown code blocks if present
+            if '```json' in text:
+                text = text.split('```json')[1].split('```')[0].strip()
+            elif '```' in text:
+                text = text.split('```')[1].split('```')[0].strip()
+            
+            concept = json.loads(text)
+            
+            # Track this concept
+            generate_concept_with_ai.used_concepts.add(concept['name'])
+            recent_concepts[session_id].append(concept['name'])
+            if len(recent_concepts[session_id]) > 10:
+                recent_concepts[session_id].pop(0)
+            
+            print(f"[AI CONCEPT] Generated: {concept['name']}")
+            return concept
+        else:
+            raise Exception("No response from AI")
+            
+    except Exception as e:
+        print(f"[AI CONCEPT ERROR] Failed to generate concept: {str(e)}")
+        # Fallback to static pool
+        items = ITEMS.get(difficulty, ITEMS['hard'])
+        return random.choice(items)
 
 @app.route('/api/question', methods=['POST'])
 def ask_question():
