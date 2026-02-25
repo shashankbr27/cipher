@@ -78,3 +78,6 @@ question_engine.py
 content_generator.py
 gemini_client.py
 models.py
+
+# Vercel
+.vercel
