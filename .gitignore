@@ -1,0 +1,80 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Testing - DO NOT UPLOAD
+test_*.py
+*_test.py
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+pytest.ini
+conftest.py
+
+# Documentation - Only README.md allowed
+*.md
+!README.md
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.kiro/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+secrets.toml
+.streamlit/secrets.toml
+*.key
+.streamlit/
+
+# Logs
+*.log
+
+# Specs and docs
+.kiro/
+specs/
+
+# Cache
+.pytest_cache/
+__pycache__/
+*.pyc
+
+# Streamlit files (not needed for Flask)
+app.py
+ui_components.py
+session_state_manager.py
+game_controller.py
+question_engine.py
+content_generator.py
+gemini_client.py
+models.py
